@@ -3,7 +3,7 @@ const app = express();
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const port = process.env.PORT || 5000;
 
@@ -32,6 +32,7 @@ async function run() {
     const menuCollection = client.db("tastyTreatdb").collection("menu");
     const reviewCollection = client.db("tastyTreatdb").collection("reviews");
     const cartCollection = client.db("tastyTreatdb").collection("carts");
+    const paymentCollection = client.db("tastyTreatdb").collection("payments");
 
     // jwt related api
     app.post("/jwt", async (req, res) => {
@@ -84,7 +85,7 @@ async function run() {
       }
       const query = { email: email };
       const user = await userCollection.findOne(query);
-      let Admin = false;
+      let admin = false;
       if (user) {
         admin = user?.role === "admin";
       }
@@ -198,20 +199,48 @@ async function run() {
     });
 
     // payment intent
-    app.post('/create-payment-intent', async(req, res) => {
-      const {price} = req.body;
+    app.post("/create-payment-intent", async (req, res) => {
+      const { price } = req.body;
       const amount = parseInt(price * 100);
 
       const paymentIntent = await stripe.paymentIntents.create({
-        amount : amount,
-        currency: 'usd',
-        payment_method_types: ['card']
+        amount: amount,
+        currency: "usd",
+        payment_method_types: ["card"],
       });
-      
+
       res.send({
-        clientSecret: paymentIntent.client_secret
-      })
-    })
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
+    
+
+    app.get("/payments/:email", verifyToken, async (req, res) => {
+      const query = { email: req.params.email };
+      if (req.params.email !== req.decoded.email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      const result = await paymentCollection.find(query).toArray();
+      res.send(result);
+    });
+
+
+    app.post("/payments", async (req, res) => {
+      const payment = req.body;
+      const paymentResult = await paymentCollection.insertOne(payment);
+
+      // delete each item from the cart
+      console.log("payment info", payment);
+      const query = {
+        _id: {
+          $in: payment.cartIds.map((id) => new ObjectId(id)),
+        },
+      };
+
+      const deleteResult = await cartCollection.deleteMany(query);
+
+      res.send({ paymentResult, deleteResult });
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
